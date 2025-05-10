@@ -1,0 +1,923 @@
+-- Settings
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "Sour Patch Operation Siege",
+    LoadingTitle = "Sour Patch Operation Siege",
+    LoadingSubtitle = "by Jrminalga",
+    Theme = "Default",
+    ConfigurationSaving = {
+       Enabled = true,
+       FolderName = nil,
+       FileName = "Big Hub"
+    },
+    Discord = {
+       Enabled = false,
+       Invite = "noinvitelink",
+       RememberJoins = true
+    },
+    KeySystem = false,
+    KeySettings = {
+       Title = "Untitled",
+       Subtitle = "Key System",
+       Note = "No method of obtaining the key is provided",
+       FileName = "Key",
+       SaveKey = true,
+       GrabKeyFromSite = false,
+       Key = {"Hello"}
+    }
+})
+
+local MainTab = Window:CreateTab("Main", 4483362458)
+local UItab = Window:CreateTab("Visuals", 4483362458)
+local ThemesTab = Window:CreateTab("Themes", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
+local UpdatesTab = Window:CreateTab("Updates", 4483362458)
+
+local SettingsConfigSection = SettingsTab:CreateSection("Config Settings")
+-- Add a button to save the current configuration
+local SaveButton = SettingsTab:CreateButton({
+    Name = "Save Current Configuration",
+    Callback = function()
+        Rayfield:SaveConfiguration()
+        Rayfield:Notify({
+            Title = "Configuration Saved!",
+            Content = "Your settings have been saved successfully.",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end,
+})
+
+-- Add a button to load the saved configuration
+local LoadButton = SettingsTab:CreateButton({
+    Name = "Load Saved Configuration",
+    Callback = function()
+        Rayfield:LoadConfiguration()
+        Rayfield:Notify({
+            Title = "Configuration Loaded",
+            Content = "Your settings have been loaded successfully.",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end,
+})
+
+-- Theme Selector Dropdown
+local ThemeDropdown = ThemesTab:CreateDropdown({
+    Name = "Select Theme",
+    Options = {
+        "Default", 
+        "Amber Glow", 
+        "Amethyst", 
+        "Bloom", 
+        "Dark Blue", 
+        "Green", 
+        "Light", 
+        "Ocean", 
+        "Serenity"
+    },
+    CurrentOption = {"Default"},
+    MultipleOptions = false,
+    Flag = "ThemeSelector",
+    Callback = function(Selected)
+        local themeMap = {
+            ["Default"] = "Default",
+            ["Amber Glow"] = "AmberGlow",
+            ["Amethyst"] = "Amethyst",
+            ["Bloom"] = "Bloom",
+            ["Dark Blue"] = "DarkBlue",
+            ["Green"] = "Green",
+            ["Light"] = "Light",
+            ["Ocean"] = "Ocean",
+            ["Serenity"] = "Serenity"
+        }
+        
+        local themeIdentifier = themeMap[Selected[1]]
+        Window.ModifyTheme(themeIdentifier)
+    end,
+ })
+
+local Label = UpdatesTab:CreateLabel("fixed ESP fps bug", 4483362458, Color3.fromRGB(255, 255, 255), false) -- Title, Icon, Color, IgnoreTheme
+local Label = UpdatesTab:CreateLabel("able to save a config in settings tab", 4483362458, Color3.fromRGB(255, 255, 255), false) -- Title, Icon, Color, IgnoreTheme
+local Label = UpdatesTab:CreateLabel("Fixed themes", 4483362458, Color3.fromRGB(255, 255, 255), false) -- Title, Icon, Color, IgnoreTheme
+
+-- ESP Settings
+local espSettings = {
+    Enabled = false,
+    ShowNames = true,
+    ShowEveryone = false,
+    ShowDot = true,
+    DotSize = 4,
+    NameSize = 18,
+    BoxColor = Color3.new(1, 0, 0),
+    NameColor = Color3.new(1, 1, 1),
+    DotColor = Color3.new(1, 1, 0),
+    RainbowMode = false,
+    RainbowSpeed = 1,
+    ToggleInterval = 5, -- Time between toggles (seconds)
+    ToggleDuration = 0.1 -- How long ESP stays off during toggle (seconds)
+}
+
+local espObjects = {}
+local playerConnections = {} -- Table to store player connections
+local rainbowHue = 0
+local toggleConnection = nil
+local espVisible = true -- Track current visibility state
+local droneESPOriginalState = false -- To track if drone ESP was originally enabled
+local currentTeam = nil -- To track current team
+
+-- Rainbow color generator
+local function getRainbowColor(hue)
+    return Color3.fromHSV(hue, 1, 1)
+end
+
+-- Update rainbow effect
+local rainbowConnection = game:GetService("RunService").Heartbeat:Connect(function(delta)
+    if espSettings.RainbowMode then
+        rainbowHue = (rainbowHue + delta * 0.25 * espSettings.RainbowSpeed) % 1
+        for _, data in pairs(espObjects) do
+            if data.box then
+                data.box.Color = getRainbowColor(rainbowHue)
+            end
+            if data.dot then
+                data.dot.Color = getRainbowColor(rainbowHue)
+            end
+        end
+    end
+end)
+
+-- Check if Drawing is supported
+local function isDrawingSupported()
+    local success, _ = pcall(function()
+        return Drawing.new("Square")
+    end)
+    return success
+end
+
+local function createEsp(player)
+    if not isDrawingSupported() then
+        warn("Drawing library not supported in this environment!")
+        return
+    end
+
+    -- Clean up any existing connection for this player
+    if playerConnections[player] then
+        playerConnections[player]:Disconnect()
+        playerConnections[player] = nil
+    end
+
+    -- Wait for character to exist
+    local character = player.Character
+    if not character then
+        playerConnections[player] = player.CharacterAdded:Connect(function(newChar)
+            character = newChar
+            createEsp(player) -- Retry now that character exists
+        end)
+        return
+    end
+
+    local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 5) -- Wait up to 5 seconds
+    local humanoid = character:WaitForChild("Humanoid", 5)
+    local head = character:WaitForChild("Head", 5)
+    if not humanoidRootPart or not humanoid or not head then return end
+
+    -- Create ESP Box
+    local espBox = Drawing.new("Square")
+    espBox.Visible = false
+    espBox.Color = espSettings.RainbowMode and getRainbowColor(rainbowHue) or espSettings.BoxColor
+    espBox.Thickness = 1
+    espBox.Filled = false
+    espBox.ZIndex = 1
+
+    -- Create Name Tag
+    local nameTag = Drawing.new("Text")
+    nameTag.Visible = false
+    nameTag.Color = espSettings.NameColor
+    nameTag.Size = espSettings.NameSize
+    nameTag.Center = true
+    nameTag.Outline = true
+    nameTag.OutlineColor = Color3.new(0, 0, 0)
+    nameTag.Text = player.Name
+    nameTag.ZIndex = 2
+
+    -- Create Head Dot
+    local headDot = Drawing.new("Circle")
+    headDot.Visible = false
+    headDot.Color = espSettings.RainbowMode and getRainbowColor(rainbowHue) or espSettings.DotColor
+    headDot.Thickness = 1
+    headDot.Filled = true
+    headDot.Transparency = 1
+    headDot.Radius = espSettings.DotSize
+    headDot.ZIndex = 3
+
+    espObjects[player] = {
+        box = espBox,
+        name = nameTag,
+        dot = headDot,
+        character = character,
+        connection = character:GetPropertyChangedSignal("Parent"):Connect(function()
+            if not character.Parent then
+                espBox:Remove()
+                nameTag:Remove()
+                headDot:Remove()
+                espObjects[player] = nil
+            end
+        end)
+    }
+
+    local function updateEsp()
+        if not espSettings.Enabled or not character or not humanoidRootPart or humanoid.Health <= 0 then
+            espBox.Visible = false
+            nameTag.Visible = false
+            headDot.Visible = false
+            return
+        end
+
+        -- Skip team check if ShowEveryone is enabled
+        if not espSettings.ShowEveryone then
+            -- Team check (skip if game has no teams)
+            local localPlayer = game.Players.LocalPlayer
+            if player.Team and localPlayer.Team and player.Team == localPlayer.Team then
+                espBox.Visible = false
+                nameTag.Visible = false
+                headDot.Visible = false
+                return
+            end
+        end
+
+        local rootPosition, rootVisible = workspace.CurrentCamera:WorldToViewportPoint(humanoidRootPart.Position)
+        local headPosition, headVisible = workspace.CurrentCamera:WorldToViewportPoint(head.Position)
+        
+        if rootVisible then
+            -- Calculate box size
+            local size = (workspace.CurrentCamera:WorldToViewportPoint(humanoidRootPart.Position - Vector3.new(0, 3, 0))).Y - 
+                         (workspace.CurrentCamera:WorldToViewportPoint(humanoidRootPart.Position + Vector3.new(0, 2.5, 0))).Y
+            local scale = math.abs(size / 2)
+            
+            -- Update box
+            espBox.Size = Vector2.new(scale * 1.5, scale * 1.9)
+            espBox.Position = Vector2.new(rootPosition.X - espBox.Size.X / 2, rootPosition.Y - espBox.Size.Y / 2)
+            espBox.Visible = espVisible and true
+
+            -- Update name tag
+            nameTag.Size = espSettings.NameSize
+            nameTag.Position = Vector2.new(rootPosition.X, rootPosition.Y - espBox.Size.Y / 2 - 20)
+            nameTag.Visible = espVisible and espSettings.ShowNames
+            
+            -- Update head dot
+            if headVisible and espSettings.ShowDot then
+                headDot.Position = Vector2.new(headPosition.X, headPosition.Y)
+                headDot.Radius = espSettings.DotSize
+                headDot.Visible = espVisible and true
+            else
+                headDot.Visible = false
+            end
+        else
+            espBox.Visible = false
+            nameTag.Visible = false
+            headDot.Visible = false
+        end
+    end
+
+    game:GetService("RunService").RenderStepped:Connect(updateEsp)
+end
+
+local function removeEsp(player)
+    if espObjects[player] then
+        if espObjects[player].box then espObjects[player].box:Remove() end
+        if espObjects[player].name then espObjects[player].name:Remove() end
+        if espObjects[player].dot then espObjects[player].dot:Remove() end
+        if espObjects[player].connection then espObjects[player].connection:Disconnect() end
+        espObjects[player] = nil
+    end
+end
+
+local function updateAllEsp()
+    for player, data in pairs(espObjects) do
+        if data.box then
+            data.box.Color = espSettings.RainbowMode and getRainbowColor(rainbowHue) or espSettings.BoxColor
+        end
+        if data.name then
+            data.name.Size = espSettings.NameSize
+            data.name.Visible = espVisible and espSettings.ShowNames and espSettings.Enabled
+        end
+        if data.dot then
+            data.dot.Color = espSettings.RainbowMode and getRainbowColor(rainbowHue) or espSettings.DotColor
+            data.dot.Visible = espVisible and espSettings.ShowDot and espSettings.Enabled
+            data.dot.Radius = espSettings.DotSize
+        end
+    end
+end
+
+-- Function to toggle ESP visibility quickly
+local function toggleEspVisibility()
+    if not espSettings.Enabled then return end
+    
+    -- Toggle visibility
+    espVisible = not espVisible
+    updateAllEsp()
+    
+    -- If we just turned it off, schedule turning it back on
+    if not espVisible then
+        task.delay(espSettings.ToggleDuration, function()
+            espVisible = true
+            updateAllEsp()
+        end)
+    end
+end
+
+-- Function to start/restart the toggle loop
+local function startToggleLoop()
+    if toggleConnection then
+        toggleConnection:Disconnect()
+    end
+    
+    toggleConnection = game:GetService("RunService").Heartbeat:Connect(function()
+        -- We'll manage the timing ourselves for more precision
+    end)
+    
+    -- Start the toggle loop in a separate thread
+    coroutine.wrap(function()
+        while espSettings.Enabled and toggleConnection do
+            toggleEspVisibility()
+            wait(espSettings.ToggleInterval)
+        end
+    end)()
+end
+
+-- Player added handler
+local function onPlayerAdded(player)
+    if player ~= game.Players.LocalPlayer then
+        playerConnections[player] = player.CharacterAdded:Connect(function(character)
+            if espSettings.Enabled then
+                createEsp(player)
+            end
+        end)
+        
+        if player.Character and espSettings.Enabled then
+            createEsp(player)
+        end
+    end
+end
+
+local function setupEsp()
+    -- Clear existing connections
+    for player, connection in pairs(playerConnections) do
+        connection:Disconnect()
+    end
+    playerConnections = {}
+    
+    -- Setup ESP for existing players
+    for _, player in ipairs(game.Players:GetPlayers()) do
+        if player ~= game.Players.LocalPlayer then
+            coroutine.wrap(function()
+                if espSettings.Enabled then
+                    createEsp(player)
+                else
+                    removeEsp(player)
+                end
+            end)()
+        end
+    end
+    
+    if espSettings.Enabled then
+        espVisible = true -- Reset visibility when enabling
+        startToggleLoop()
+    elseif toggleConnection then
+        toggleConnection:Disconnect()
+        toggleConnection = nil
+    end
+end
+
+-- Main ESP Toggle
+local WallhackSection = UItab:CreateSection("ESP settings")
+UItab:CreateToggle({
+    Name = "ESP",
+    CurrentValue = espSettings.Enabled,
+    Flag = "ESPEnabled",
+    Callback = function(Value)
+        espSettings.Enabled = Value
+        setupEsp()
+    end,
+})
+
+-- Show Everyone Toggle
+UItab:CreateToggle({
+    Name = "Show Everyone",
+    CurrentValue = espSettings.ShowEveryone,
+    Flag = "ShowEveryone",
+    Callback = function(Value)
+        espSettings.ShowEveryone = Value
+        updateAllEsp()
+    end,
+})
+
+-- Head Dot Toggle
+UItab:CreateToggle({
+    Name = "Head Dot",
+    CurrentValue = espSettings.ShowDot,
+    Flag = "ShowDot",
+    Callback = function(Value)
+        espSettings.ShowDot = Value
+        updateAllEsp()
+    end,
+})
+
+-- Dot Size Slider
+UItab:CreateSlider({
+    Name = "Dot Size",
+    Range = {2, 10},
+    Increment = 1,
+    Suffix = "px",
+    CurrentValue = espSettings.DotSize,
+    Flag = "DotSize",
+    Callback = function(Value)
+        espSettings.DotSize = Value
+        updateAllEsp()
+    end,
+})
+
+-- Nametag Toggle
+UItab:CreateToggle({
+    Name = "NameTags",
+    CurrentValue = espSettings.ShowNames,
+    Flag = "NameTagsEnabled",
+    Callback = function(Value)
+        espSettings.ShowNames = Value
+        updateAllEsp()
+    end,
+})
+
+-- Nametag Size Slider
+UItab:CreateSlider({
+    Name = "NameTag Size",
+    Range = {10, 30},
+    Increment = 1,
+    Suffix = "px",
+    CurrentValue = espSettings.NameSize,
+    Flag = "NameTagSize",
+    Callback = function(Value)
+        espSettings.NameSize = Value
+        updateAllEsp()
+    end,
+})
+
+-- ESP Color Picker
+UItab:CreateColorPicker({
+    Name = "ESP Color",
+    Color = espSettings.BoxColor,
+    Flag = "ESPColor",
+    Callback = function(Value)
+        espSettings.BoxColor = Value
+        if not espSettings.RainbowMode then
+            updateAllEsp()
+        end
+    end
+})
+
+-- Dot Color Picker
+UItab:CreateColorPicker({
+    Name = "Dot Color",
+    Color = espSettings.DotColor,
+    Flag = "DotColor",
+    Callback = function(Value)
+        espSettings.DotColor = Value
+        if not espSettings.RainbowMode then
+            updateAllEsp()
+        end
+    end
+})
+
+-- Rainbow Mode Toggle
+UItab:CreateToggle({
+    Name = "Rainbow ESP",
+    CurrentValue = espSettings.RainbowMode,
+    Flag = "RainbowMode",
+    Callback = function(Value)
+        espSettings.RainbowMode = Value
+        updateAllEsp()
+    end,
+})
+
+-- Rainbow Speed Slider
+UItab:CreateSlider({
+    Name = "Rainbow Speed",
+    Range = {0.5, 3},
+    Increment = 0.1,
+    Suffix = "x",
+    CurrentValue = espSettings.RainbowSpeed,
+    Flag = "RainbowSpeed",
+    Callback = function(Value)
+        espSettings.RainbowSpeed = Value
+    end,
+})
+
+-- ESP Toggle Interval Slider
+UItab:CreateSlider({
+    Name = "ESP Toggle Interval",
+    Range = {0.1, 10}, -- 0.1 to 10 seconds
+    Increment = 0.1,
+    Suffix = "sec",
+    CurrentValue = espSettings.ToggleInterval,
+    Flag = "ToggleInterval",
+    Callback = function(Value)
+        espSettings.ToggleInterval = Value
+        if espSettings.Enabled then
+            startToggleLoop() -- Restart the loop with new interval
+        end
+    end,
+})
+
+-- ESP Toggle Duration Slider
+UItab:CreateSlider({
+    Name = "ESP Off Duration",
+    Range = {0.05, 1}, -- 0.05 to 1 seconds
+    Increment = 0.05,
+    Suffix = "sec",
+    CurrentValue = espSettings.ToggleDuration,
+    Flag = "ToggleDuration",
+    Callback = function(Value)
+        espSettings.ToggleDuration = Value
+    end,
+})
+
+-- Player handlers
+game.Players.PlayerAdded:Connect(onPlayerAdded)
+
+game.Players.PlayerRemoving:Connect(function(player)
+    if playerConnections[player] then
+        playerConnections[player]:Disconnect()
+        playerConnections[player] = nil
+    end
+    removeEsp(player)
+end)
+
+-- Initial setup
+setupEsp()
+
+local DroneESPSection = UItab:CreateSection("Drone ESP Settings")
+
+-- Drone ESP settings
+local droneESPSettings = {
+    Enabled = false,
+    Color = Color3.fromRGB(255, 50, 50),
+    Transparency = 0.4,
+    MaxDistance = 1000,
+    RainbowMode = false,
+    RainbowSpeed = 1
+}
+
+local espObjects = {}
+local rainbowHue = 0
+local heartbeatConnection
+
+-- Function to create wallhack ESP box only
+local function createDroneESP(droneModel)
+    local primaryPart = droneModel.PrimaryPart or droneModel:FindFirstChildWhichIsA("BasePart", true)
+    if not primaryPart then return end
+
+    local initialColor = droneESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or droneESPSettings.Color
+
+    local box = Instance.new("BoxHandleAdornment")
+    box.Name = "DroneESP"
+    box.Adornee = primaryPart
+    box.AlwaysOnTop = true
+    box.ZIndex = 10
+    box.Size = primaryPart.Size + Vector3.new(0.5, 0.5, 0.5)
+    box.Color3 = initialColor  -- Set initial color based on mode
+    box.Transparency = droneESPSettings.Transparency
+    box.Parent = primaryPart
+
+    espObjects[droneModel] = {
+        box = box,
+        connection = droneModel.AncestryChanged:Connect(function()
+            if not droneModel or not droneModel.Parent then
+                removeDroneESP(droneModel)
+            end
+        end)
+    }
+end
+
+-- Function to remove ESP
+local function removeDroneESP(droneModel)
+    if espObjects[droneModel] then
+        if espObjects[droneModel].box then
+            espObjects[droneModel].box:Destroy()
+        end
+        if espObjects[droneModel].connection then
+            espObjects[droneModel].connection:Disconnect()
+        end
+        espObjects[droneModel] = nil
+    end
+end
+
+-- Cleanup function
+local function cleanUpDroneESP()
+    for droneModel, _ in pairs(espObjects) do
+        if not droneModel or not droneModel.Parent then
+            removeDroneESP(droneModel)
+        end
+    end
+end
+
+-- Main scanning function
+local function scanForDrones()
+    if not droneESPSettings.Enabled then return end
+    
+    -- Find drones folder dynamically (case insensitive)
+    local dronesFolder
+    for _, child in ipairs(workspace:GetDescendants()) do
+        if child.Name:lower() == "drones" and child:IsA("Folder") then
+            dronesFolder = child
+            break
+        end
+    end
+
+    if not dronesFolder then return end
+
+    -- Scan all drone models
+    for _, item in ipairs(dronesFolder:GetChildren()) do
+        if item:IsA("Model") then
+            -- Find drone mesh (case insensitive)
+            local mesh = item:FindFirstChild("Drone") or item:FindFirstChildWhichIsA("BasePart", true)
+            
+            if mesh and not espObjects[item] then
+                createDroneESP(item)
+            end
+        end
+    end
+
+    cleanUpDroneESP()
+end
+
+-- Distance-based visibility update
+local function updateDroneESPVisibility()
+    if not droneESPSettings.Enabled or not localPlayer.Character then return end
+    local rootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+
+    for droneModel, esp in pairs(espObjects) do
+        if droneModel and droneModel.Parent and esp.box and esp.box.Adornee then
+            local distance = (rootPart.Position - esp.box.Adornee.Position).Magnitude
+            esp.box.Visible = distance <= droneESPSettings.MaxDistance
+            
+            -- Update rainbow color if enabled
+            if droneESPSettings.RainbowMode then
+                esp.box.Color3 = Color3.fromHSV(rainbowHue, 1, 1)
+            end
+        else
+            removeDroneESP(droneModel)
+        end
+    end
+end
+
+-- Rainbow color update
+local function updateRainbow(delta)
+    if droneESPSettings.RainbowMode then
+        rainbowHue = (rainbowHue + delta * 0.25 * droneESPSettings.RainbowSpeed) % 1
+        -- Update all active drone ESP boxes
+        for _, esp in pairs(espObjects) do
+            if esp.box then
+                esp.box.Color3 = Color3.fromHSV(rainbowHue, 1, 1)
+            end
+        end
+    end
+end
+
+-- Setup main loop
+local function setupDroneESP()
+    -- Clear existing ESP
+    for droneModel, _ in pairs(espObjects) do
+        removeDroneESP(droneModel)
+    end
+    
+    -- Store original state when first enabled
+    if droneESPSettings.Enabled and not droneESPOriginalState then
+        droneESPOriginalState = true
+    end
+    
+    -- Check team before enabling
+    local localPlayer = game.Players.LocalPlayer
+    if localPlayer and localPlayer.Team then
+        currentTeam = localPlayer.Team.Name
+        if currentTeam == "Attackers" then
+            -- Disable drone ESP if on Attackers team
+            if heartbeatConnection then
+                heartbeatConnection:Disconnect()
+                heartbeatConnection = nil
+            end
+            return
+        end
+    end
+    
+    -- Only enable if we're not on Attackers team and it was originally enabled
+    if droneESPOriginalState then
+        droneESPSettings.Enabled = true
+        
+        -- Initial scan
+        scanForDrones()
+        
+        -- Set up heartbeat connection if not already exists
+        if not heartbeatConnection then
+            heartbeatConnection = game:GetService("RunService").Heartbeat:Connect(function(delta)
+                updateRainbow(delta)
+                scanForDrones()
+                updateDroneESPVisibility()
+            end)
+        end
+    else
+        -- Disconnect if disabled
+        if heartbeatConnection then
+            heartbeatConnection:Disconnect()
+            heartbeatConnection = nil
+        end
+    end
+end
+
+local function checkTeamChange()
+    local localPlayer = game.Players.LocalPlayer
+    if not localPlayer then return end
+    
+    localPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+        if localPlayer.Team then
+            local newTeam = localPlayer.Team.Name
+            if newTeam ~= currentTeam then
+                currentTeam = newTeam
+                if droneESPOriginalState then -- Only if drone ESP was originally enabled
+                    if newTeam == "Defenders" then
+                        -- Re-enable drone ESP when switching to Defenders
+                        setupDroneESP()
+                    elseif newTeam == "Attackers" then
+                        -- Disable drone ESP when switching to Attackers
+                        for droneModel, _ in pairs(espObjects) do
+                            removeDroneESP(droneModel)
+                        end
+                        if heartbeatConnection then
+                            heartbeatConnection:Disconnect()
+                            heartbeatConnection = nil
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- Initialize team checking
+checkTeamChange()
+
+-- Main toggle
+UItab:CreateToggle({
+    Name = "Drone ESP",
+    CurrentValue = droneESPSettings.Enabled,
+    Flag = "DroneESPEnabled",
+    Callback = function(Value)
+        droneESPSettings.Enabled = Value
+        if Value then
+            droneESPOriginalState = true -- Mark as originally enabled
+        else
+            droneESPOriginalState = false -- Mark as originally disabled
+        end
+        setupDroneESP()
+    end,
+})
+
+-- Color picker
+UItab:CreateColorPicker({
+    Name = "Drone ESP Color",
+    Color = droneESPSettings.Color,
+    Flag = "DroneESPColor",
+    Callback = function(Value)
+        droneESPSettings.Color = Value
+        if not droneESPSettings.RainbowMode then
+            for _, esp in pairs(espObjects) do
+                if esp.box then
+                    esp.box.Color3 = Value
+                end
+            end
+        end
+    end
+})
+
+-- Transparency slider
+UItab:CreateSlider({
+    Name = "Drone ESP Transparency",
+    Range = {0, 1},
+    Increment = 0.05,
+    Suffix = "",
+    CurrentValue = droneESPSettings.Transparency,
+    Flag = "DroneESPTransparency",
+    Callback = function(Value)
+        droneESPSettings.Transparency = Value
+        for _, esp in pairs(espObjects) do
+            if esp.box then
+                esp.box.Transparency = Value
+            end
+        end
+    end,
+})
+
+-- Max distance slider
+UItab:CreateSlider({
+    Name = "Drone ESP Distance",
+    Range = {100, 2000},
+    Increment = 50,
+    Suffix = " studs",
+    CurrentValue = droneESPSettings.MaxDistance,
+    Flag = "DroneESPDistance",
+    Callback = function(Value)
+        droneESPSettings.MaxDistance = Value
+    end,
+})
+
+-- Rainbow mode toggle
+UItab:CreateToggle({
+    Name = "Drone Rainbow ESP",
+    CurrentValue = droneESPSettings.RainbowMode,
+    Flag = "DroneRainbowMode",
+    Callback = function(Value)
+        droneESPSettings.RainbowMode = Value
+        -- Force update all colors when toggling rainbow mode
+        for _, esp in pairs(espObjects) do
+            if esp.box then
+                esp.box.Color3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or droneESPSettings.Color
+            end
+        end
+    end,
+})
+
+-- Rainbow speed slider
+UItab:CreateSlider({
+    Name = "Drone Rainbow Speed",
+    Range = {0.5, 3},
+    Increment = 0.1,
+    Suffix = "x",
+    CurrentValue = droneESPSettings.RainbowSpeed,
+    Flag = "DroneRainbowSpeed",
+    Callback = function(Value)
+        droneESPSettings.RainbowSpeed = Value
+    end,
+})
+
+local Teleportsection = MainTab:CreateSection("Teleport")
+local Input = MainTab:CreateInput({
+    Name = "Player Username",
+    PlaceholderText = "Enter username",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        -- Store the input text in targetUsername
+        targetUsername = Text
+    end,
+})
+
+local Button = MainTab:CreateButton({
+    Name = "Teleport to Player",
+    Callback = function()
+        local players = game:GetService("Players")
+        local targetPlayer = players:FindFirstChild(targetUsername)
+        
+        if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            local localPlayer = players.LocalPlayer
+            if localPlayer.Character then
+                localPlayer.Character:MoveTo(targetPlayer.Character.HumanoidRootPart.Position)
+                Rayfield:Notify({
+                    Title = "Teleport Success",
+                    Content = "Teleported to "..targetUsername,
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            else
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Your character doesn't exist",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            end
+        else
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Player not found or doesn't have character",
+                Duration = 3,
+                Image = 4483362458,
+            })
+        end
+    end,
+})
+
+-- Cleanup
+Rayfield:DestroySignal():Connect(function()
+    if toggleConnection then
+        toggleConnection:Disconnect()
+        toggleConnection = nil
+    end
+    if rainbowConnection then
+        rainbowConnection:Disconnect()
+    end
+    -- Clean up player connections
+    for player, connection in pairs(playerConnections) do
+        connection:Disconnect()
+    end
+    playerConnections = {}
+end)
