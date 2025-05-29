@@ -116,7 +116,8 @@ local playerESPSettings = {
     RainbowMode = false,
     RainbowSpeed = 1,
     ShowNameTags = true,
-    NameTagSize = 14
+    NameTagSize = 14,
+    ShowDistance = true
 }
 
 local CoreGui = game:FindService("CoreGui")
@@ -155,6 +156,15 @@ local function isEnemy(plr)
     return plr.Team.Name == enemyTeam
 end
 
+-- Function to calculate distance between two positions
+local function getDistanceFromPlayer(targetPosition)
+    local character = lp.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return 0 end
+    
+    local rootPart = character.HumanoidRootPart
+    return (rootPart.Position - targetPosition).Magnitude
+end
+
 -- Function to update rainbow colors
 local function updateRainbowColors()
     if not playerESPSettings.RainbowMode then return end
@@ -162,17 +172,24 @@ local function updateRainbowColors()
     rainbowHue = (rainbowHue + 0.01 * playerESPSettings.RainbowSpeed) % 1
     local rainbowColor = Color3.fromHSV(rainbowHue, 1, 1)
     
+    -- Update highlights
     for _, highlight in ipairs(Storage:GetChildren()) do
         if highlight:IsA("Highlight") then
             highlight.FillColor = rainbowColor
         end
     end
     
-    -- Update name tag colors too if rainbow mode is on
+    -- Update name tags and distance labels
     if playerESPSettings.ShowNameTags then
         for _, billboard in ipairs(Storage:GetChildren()) do
             if billboard:IsA("BillboardGui") then
-                billboard.Frame.TextLabel.TextColor3 = rainbowColor
+                local textLabel = billboard.Frame.TextLabel
+                local distanceLabel = billboard.Frame:FindFirstChild("DistanceLabel")
+                
+                textLabel.TextColor3 = rainbowColor
+                if distanceLabel then
+                    distanceLabel.TextColor3 = rainbowColor
+                end
             end
         end
     end
@@ -210,10 +227,12 @@ local function createNameTag(plr, character)
     frame.Size = UDim2.new(1, 0, 1, 0)
     frame.Parent = billboard
     
+    -- Name label
     local textLabel = Instance.new("TextLabel")
     textLabel.Name = "TextLabel"
     textLabel.Text = plr.Name
-    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    textLabel.Position = UDim2.new(0, 0, 0, 0)
     textLabel.BackgroundTransparency = 1
     textLabel.TextStrokeTransparency = 0.5
     textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
@@ -222,6 +241,38 @@ local function createNameTag(plr, character)
     textLabel.TextSize = playerESPSettings.NameTagSize
     textLabel.TextColor3 = playerESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or playerESPSettings.FillColor
     textLabel.Parent = frame
+    
+    -- Distance label (if enabled)
+    if playerESPSettings.ShowDistance then
+        local distanceLabel = Instance.new("TextLabel")
+        distanceLabel.Name = "DistanceLabel"
+        distanceLabel.Text = "0 studs"
+        distanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
+        distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
+        distanceLabel.BackgroundTransparency = 1
+        distanceLabel.TextStrokeTransparency = 0.5
+        distanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+        distanceLabel.Font = Enum.Font.GothamBold
+        distanceLabel.TextScaled = false
+        distanceLabel.TextSize = playerESPSettings.NameTagSize - 2
+        distanceLabel.TextColor3 = playerESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or playerESPSettings.FillColor
+        distanceLabel.Parent = frame
+        
+        -- Create a loop to update the distance
+        local distanceConnection
+        distanceConnection = game:GetService("RunService").Heartbeat:Connect(function()
+            if character and character:FindFirstChild("Head") then
+                local distance = math.floor(getDistanceFromPlayer(character.Head.Position))
+                distanceLabel.Text = tostring(distance) .. " studs"
+            else
+                distanceConnection:Disconnect()
+            end
+        end)
+        
+        -- Store the connection so we can clean it up later
+        if not connections[plr] then connections[plr] = {} end
+        connections[plr].distanceConnection = distanceConnection
+    end
     
     return billboard
 end
@@ -256,17 +307,20 @@ local function Highlight(plr)
     local plrchar = plr.Character
     setupCharacter(plrchar)
 
-    connections[plr] = {
-        charAdded = plr.CharacterAdded:Connect(function(char)
-            setupCharacter(char)
-        end),
-        charRemoving = plr.CharacterRemoving:Connect(function()
-            if nameTag then
-                nameTag:Destroy()
-                nameTag = nil
-            end
-        end)
-    }
+    connections[plr] = connections[plr] or {}
+    connections[plr].charAdded = plr.CharacterAdded:Connect(function(char)
+        setupCharacter(char)
+    end)
+    connections[plr].charRemoving = plr.CharacterRemoving:Connect(function()
+        if nameTag then
+            nameTag:Destroy()
+            nameTag = nil
+        end
+        if connections[plr] and connections[plr].distanceConnection then
+            connections[plr].distanceConnection:Disconnect()
+            connections[plr].distanceConnection = nil
+        end
+    end)
 end
 
 local function updateNameTags()
@@ -275,6 +329,12 @@ local function updateNameTags()
             local textLabel = item.Frame.TextLabel
             if textLabel then
                 textLabel.TextSize = playerESPSettings.NameTagSize
+                textLabel.TextColor3 = playerESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or playerESPSettings.FillColor
+            end
+            local distanceLabel = item.Frame:FindFirstChild("DistanceLabel")
+            if distanceLabel then
+                distanceLabel.TextSize = playerESPSettings.NameTagSize - 2
+                distanceLabel.TextColor3 = playerESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or playerESPSettings.FillColor
             end
         end
     end
@@ -293,6 +353,7 @@ local function setupPlayerESP()
         for plr, connTable in pairs(connections) do
             if connTable.charAdded then connTable.charAdded:Disconnect() end
             if connTable.charRemoving then connTable.charRemoving:Disconnect() end
+            if connTable.distanceConnection then connTable.distanceConnection:Disconnect() end
         end
         connections = {}
         
@@ -314,6 +375,7 @@ local function setupPlayerESP()
         for plr, connTable in pairs(connections) do
             if connTable.charAdded then connTable.charAdded:Disconnect() end
             if connTable.charRemoving then connTable.charRemoving:Disconnect() end
+            if connTable.distanceConnection then connTable.distanceConnection:Disconnect() end
         end
         connections = {}
         
@@ -335,6 +397,7 @@ Players.PlayerRemoving:Connect(function(plr)
     if connections[plr] then
         if connections[plr].charAdded then connections[plr].charAdded:Disconnect() end
         if connections[plr].charRemoving then connections[plr].charRemoving:Disconnect() end
+        if connections[plr].distanceConnection then connections[plr].distanceConnection:Disconnect() end
     end
 end)
 
@@ -356,6 +419,19 @@ UItab:CreateToggle({
     Flag = "PlayerESPShowNameTags",
     Callback = function(Value)
         playerESPSettings.ShowNameTags = Value
+        if playerESPSettings.Enabled then
+            setupPlayerESP()
+        end
+    end,
+})
+
+-- Distance display toggle
+UItab:CreateToggle({
+    Name = "Show Distance",
+    CurrentValue = playerESPSettings.ShowDistance,
+    Flag = "PlayerESPShowDistance",
+    Callback = function(Value)
+        playerESPSettings.ShowDistance = Value
         if playerESPSettings.Enabled then
             setupPlayerESP()
         end
@@ -389,8 +465,16 @@ UItab:CreateToggle({
         for _, item in ipairs(Storage:GetChildren()) do
             if item:IsA("Highlight") then
                 item.FillColor = Value and Color3.fromHSV(rainbowHue, 1, 1) or playerESPSettings.FillColor
-            elseif item:IsA("BillboardGui") and item.Frame.TextLabel then
-                item.Frame.TextLabel.TextColor3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or playerESPSettings.FillColor
+            elseif item:IsA("BillboardGui") then
+                local textLabel = item.Frame.TextLabel
+                local distanceLabel = item.Frame:FindFirstChild("DistanceLabel")
+                
+                if textLabel then
+                    textLabel.TextColor3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or playerESPSettings.FillColor
+                end
+                if distanceLabel then
+                    distanceLabel.TextColor3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or playerESPSettings.FillColor
+                end
             end
         end
     end,
@@ -420,8 +504,16 @@ UItab:CreateColorPicker({
             for _, item in ipairs(Storage:GetChildren()) do
                 if item:IsA("Highlight") then
                     item.FillColor = Value
-                elseif item:IsA("BillboardGui") and item.Frame.TextLabel then
-                    item.Frame.TextLabel.TextColor3 = Value
+                elseif item:IsA("BillboardGui") then
+                    local textLabel = item.Frame.TextLabel
+                    local distanceLabel = item.Frame:FindFirstChild("DistanceLabel")
+                    
+                    if textLabel then
+                        textLabel.TextColor3 = Value
+                    end
+                    if distanceLabel then
+                        distanceLabel.TextColor3 = Value
+                    end
                 end
             end
         end
@@ -497,13 +589,15 @@ local droneESPSettings = {
     MaxDistance = 1000,
     RainbowMode = false,
     RainbowSpeed = 1,
-    ShowNames = true, -- New setting for name labels
-    NameSize = 18 -- New setting for name size
+    ShowNames = true,
+    NameSize = 18,
+    ShowDistance = true
 }
 
 local espObjects = {}
 local rainbowHue = 0
 local heartbeatConnection
+local localPlayer = game:GetService("Players").LocalPlayer
 
 -- Function to create highlight ESP and name label
 local function createDroneESP(droneModel)
@@ -519,19 +613,27 @@ local function createDroneESP(droneModel)
     highlight.OutlineColor = Color3.new(0, 0, 0)
     highlight.Parent = droneModel
 
-    -- Create name label
+    -- Create name label container
     local nameLabel = Instance.new("BillboardGui")
     nameLabel.Name = "DroneESP_Name"
-    nameLabel.Adornee = droneModel:FindFirstChild("HumanoidRootPart") or droneModel.PrimaryPart or droneModel:FindFirstChildWhichIsA("BasePart", true)
+    local dronePart = droneModel:FindFirstChild("HumanoidRootPart") or droneModel.PrimaryPart or droneModel:FindFirstChildWhichIsA("BasePart", true)
+    nameLabel.Adornee = dronePart
     nameLabel.Size = UDim2.new(0, 200, 0, 50)
     nameLabel.StudsOffset = Vector3.new(0, 2.5, 0)
     nameLabel.AlwaysOnTop = true
     nameLabel.MaxDistance = droneESPSettings.MaxDistance
     nameLabel.Enabled = droneESPSettings.ShowNames
 
+    local frame = Instance.new("Frame")
+    frame.BackgroundTransparency = 1
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.Parent = nameLabel
+
+    -- Name label
     local textLabel = Instance.new("TextLabel")
-    textLabel.Name = "Label"
-    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.Name = "NameLabel"
+    textLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    textLabel.Position = UDim2.new(0, 0, 0, 0)
     textLabel.BackgroundTransparency = 1
     textLabel.Text = "Drone"
     textLabel.TextColor3 = droneESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or droneESPSettings.Color
@@ -539,19 +641,59 @@ local function createDroneESP(droneModel)
     textLabel.Font = Enum.Font.GothamBold
     textLabel.TextStrokeTransparency = 0
     textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-    textLabel.Parent = nameLabel
+    textLabel.Parent = frame
+
+    -- Distance label
+    local distanceLabel = Instance.new("TextLabel")
+    distanceLabel.Name = "DistanceLabel"
+    distanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    distanceLabel.BackgroundTransparency = 1
+    distanceLabel.Text = "0 studs"
+    distanceLabel.TextColor3 = droneESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or droneESPSettings.Color
+    distanceLabel.TextSize = droneESPSettings.NameSize - 2
+    distanceLabel.Font = Enum.Font.GothamBold
+    distanceLabel.TextStrokeTransparency = 0
+    distanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    distanceLabel.Visible = droneESPSettings.ShowDistance
+    distanceLabel.Parent = frame
 
     nameLabel.Parent = droneModel
+
+    -- Function to update distance
+    local function updateDistance()
+        if not droneModel or not droneModel.Parent then return end
+        if not localPlayer or not localPlayer.Character then return end
+        
+        local rootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not rootPart then return end
+        
+        local dronePart = droneModel:FindFirstChild("HumanoidRootPart") or droneModel.PrimaryPart or droneModel:FindFirstChildWhichIsA("BasePart", true)
+        if not dronePart then return end
+        
+        local distance = math.floor((rootPart.Position - dronePart.Position).Magnitude)
+        distanceLabel.Text = tostring(distance) .. " studs"
+    end
+
+    -- Create distance update connection
+    local distanceConnection
+    if droneESPSettings.ShowDistance then
+        distanceConnection = game:GetService("RunService").Heartbeat:Connect(updateDistance)
+    end
 
     espObjects[droneModel] = {
         highlight = highlight,
         nameLabel = nameLabel,
         textLabel = textLabel,
+        distanceLabel = distanceLabel,
+        droneModel = droneModel,
         connection = droneModel.AncestryChanged:Connect(function()
             if not droneModel or not droneModel.Parent then
                 removeDroneESP(droneModel)
             end
-        end)
+        end),
+        distanceConnection = distanceConnection,
+        updateDistance = updateDistance
     }
 end
 
@@ -566,6 +708,9 @@ local function removeDroneESP(droneModel)
         end
         if espObjects[droneModel].connection then
             espObjects[droneModel].connection:Disconnect()
+        end
+        if espObjects[droneModel].distanceConnection then
+            espObjects[droneModel].distanceConnection:Disconnect()
         end
         espObjects[droneModel] = nil
     end
@@ -639,6 +784,14 @@ local function updateDroneESPVisibility()
                     if esp.textLabel then
                         esp.textLabel.TextColor3 = color
                     end
+                    if esp.distanceLabel then
+                        esp.distanceLabel.TextColor3 = color
+                    end
+                end
+                
+                -- Update distance if enabled
+                if droneESPSettings.ShowDistance and esp.updateDistance then
+                    esp.updateDistance()
                 end
             end
         else
@@ -659,6 +812,9 @@ local function updateRainbow(delta)
             if esp.textLabel then
                 esp.textLabel.TextColor3 = color
             end
+            if esp.distanceLabel then
+                esp.distanceLabel.TextColor3 = color
+            end
         end
     end
 end
@@ -673,7 +829,6 @@ local function setupDroneESP()
         droneESPOriginalState = true
     end
     
-    local localPlayer = game.Players.LocalPlayer
     if localPlayer and localPlayer.Team then
         currentTeam = localPlayer.Team.Name
         if currentTeam == "Attackers" then
@@ -705,7 +860,6 @@ local function setupDroneESP()
 end
 
 local function checkTeamChange()
-    local localPlayer = game.Players.LocalPlayer
     if not localPlayer then return end
     
     localPlayer:GetPropertyChangedSignal("Team"):Connect(function()
@@ -764,6 +918,9 @@ UItab:CreateColorPicker({
                 if esp.textLabel then
                     esp.textLabel.TextColor3 = Value
                 end
+                if esp.distanceLabel then
+                    esp.distanceLabel.TextColor3 = Value
+                end
             end
         end
     end
@@ -814,6 +971,9 @@ UItab:CreateToggle({
             if esp.textLabel then
                 esp.textLabel.TextColor3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or droneESPSettings.Color
             end
+            if esp.distanceLabel then
+                esp.distanceLabel.TextColor3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or droneESPSettings.Color
+            end
         end
     end,
 })
@@ -846,6 +1006,37 @@ UItab:CreateToggle({
     end,
 })
 
+-- Distance label toggle
+UItab:CreateToggle({
+    Name = "Show Drone Distance",
+    CurrentValue = droneESPSettings.ShowDistance,
+    Flag = "DroneESPShowDistance",
+    Callback = function(Value)
+        droneESPSettings.ShowDistance = Value
+        for _, esp in pairs(espObjects) do
+            if esp.distanceLabel then
+                esp.distanceLabel.Visible = Value
+                -- Update connection based on toggle
+                if Value then
+                    if esp.distanceConnection then
+                        esp.distanceConnection:Disconnect()
+                    end
+                    esp.distanceConnection = game:GetService("RunService").Heartbeat:Connect(function()
+                        if esp.updateDistance then
+                            esp.updateDistance()
+                        end
+                    end)
+                else
+                    if esp.distanceConnection then
+                        esp.distanceConnection:Disconnect()
+                        esp.distanceConnection = nil
+                    end
+                end
+            end
+        end
+    end,
+})
+
 -- Name size slider
 UItab:CreateSlider({
     Name = "Drone Name Size",
@@ -860,9 +1051,17 @@ UItab:CreateSlider({
             if esp.textLabel then
                 esp.textLabel.TextSize = Value
             end
+            if esp.distanceLabel then
+                esp.distanceLabel.TextSize = Value - 2
+            end
         end
     end,
 })
+
+-- Initialize ESP if enabled by default
+if droneESPSettings.Enabled then
+    setupDroneESP()
+end
 
 local GadgetESPSection = UItab:CreateSection("Gadget ESP Settings")
 
@@ -875,7 +1074,9 @@ local gadgetESPSettings = {
     RainbowMode = false,
     RainbowSpeed = 1,
     ShowNames = true,
-    NameSize = 18
+    NameSize = 18,
+    ShowDistance = true,
+    ShowBulletproofCameras = true  -- New setting for bulletproof cameras
 }
 
 local espObjects = {}
@@ -883,9 +1084,10 @@ local rainbowHue = 0
 local heartbeatConnection
 local currentTeam = ""
 local gadgetESPOriginalState = false
+local localPlayer = game:GetService("Players").LocalPlayer
 
 -- Function to create highlight ESP for gadgets
-local function createGadgetESP(gadget)
+local function createGadgetESP(gadget, isBulletproofCamera)
     if espObjects[gadget] then return end -- Already exists
     
     local highlight = Instance.new("Highlight")
@@ -898,39 +1100,88 @@ local function createGadgetESP(gadget)
     highlight.OutlineColor = Color3.new(0, 0, 0)
     highlight.Parent = gadget
 
-    -- Create name label
+    -- Create name label container
     local nameLabel = Instance.new("BillboardGui")
     nameLabel.Name = "GadgetESP_Name"
-    nameLabel.Adornee = gadget:IsA("BasePart") and gadget or gadget:FindFirstChildWhichIsA("BasePart", true)
+    local gadgetPart = gadget:IsA("BasePart") and gadget or gadget:FindFirstChildWhichIsA("BasePart", true)
+    nameLabel.Adornee = gadgetPart
     nameLabel.Size = UDim2.new(0, 200, 0, 50)
     nameLabel.StudsOffset = Vector3.new(0, 2.5, 0)
     nameLabel.AlwaysOnTop = true
     nameLabel.MaxDistance = gadgetESPSettings.MaxDistance
     nameLabel.Enabled = gadgetESPSettings.ShowNames
 
+    local frame = Instance.new("Frame")
+    frame.BackgroundTransparency = 1
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.Parent = nameLabel
+
+    -- Name label
     local textLabel = Instance.new("TextLabel")
-    textLabel.Name = "Label"
-    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.Name = "NameLabel"
+    textLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    textLabel.Position = UDim2.new(0, 0, 0, 0)
     textLabel.BackgroundTransparency = 1
-    textLabel.Text = gadget.Name  -- Use the actual gadget name instead of "Gadget"
+    textLabel.Text = isBulletproofCamera and "Bulletproof Camera" or gadget.Name
     textLabel.TextColor3 = gadgetESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or gadgetESPSettings.Color
     textLabel.TextSize = gadgetESPSettings.NameSize
     textLabel.Font = Enum.Font.GothamBold
     textLabel.TextStrokeTransparency = 0
     textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-    textLabel.Parent = nameLabel
+    textLabel.Parent = frame
+
+    -- Distance label
+    local distanceLabel = Instance.new("TextLabel")
+    distanceLabel.Name = "DistanceLabel"
+    distanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    distanceLabel.BackgroundTransparency = 1
+    distanceLabel.Text = "0 studs"
+    distanceLabel.TextColor3 = gadgetESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or gadgetESPSettings.Color
+    distanceLabel.TextSize = gadgetESPSettings.NameSize - 2
+    distanceLabel.Font = Enum.Font.GothamBold
+    distanceLabel.TextStrokeTransparency = 0
+    distanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    distanceLabel.Visible = gadgetESPSettings.ShowDistance
+    distanceLabel.Parent = frame
 
     nameLabel.Parent = gadget
+
+    -- Function to update distance
+    local function updateDistance()
+        if not gadget or not gadget.Parent then return end
+        if not localPlayer or not localPlayer.Character then return end
+        
+        local rootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not rootPart then return end
+        
+        local gadgetPart = gadget:IsA("BasePart") and gadget or gadget:FindFirstChildWhichIsA("BasePart", true)
+        if not gadgetPart then return end
+        
+        local distance = math.floor((rootPart.Position - gadgetPart.Position).Magnitude)
+        distanceLabel.Text = tostring(distance) .. " studs"
+    end
+
+    -- Create distance update connection
+    local distanceConnection
+    if gadgetESPSettings.ShowDistance then
+        distanceConnection = game:GetService("RunService").Heartbeat:Connect(updateDistance)
+    end
 
     espObjects[gadget] = {
         highlight = highlight,
         nameLabel = nameLabel,
         textLabel = textLabel,
+        distanceLabel = distanceLabel,
+        gadget = gadget,
         connection = gadget.AncestryChanged:Connect(function()
             if not gadget or not gadget.Parent then
                 removeGadgetESP(gadget)
             end
-        end)
+        end),
+        distanceConnection = distanceConnection,
+        updateDistance = updateDistance,
+        isBulletproofCamera = isBulletproofCamera
     }
 end
 
@@ -946,6 +1197,9 @@ local function removeGadgetESP(gadget)
         if espObjects[gadget].connection then
             espObjects[gadget].connection:Disconnect()
         end
+        if espObjects[gadget].distanceConnection then
+            espObjects[gadget].distanceConnection:Disconnect()
+        end
         espObjects[gadget] = nil
     end
 end
@@ -959,20 +1213,43 @@ local function cleanUpGadgetESP()
     end
 end
 
+-- Function to scan for bulletproof cameras
+local function scanForBulletproofCameras()
+    if not gadgetESPSettings.Enabled or not gadgetESPSettings.ShowBulletproofCameras then return end
+    
+    -- Check for SE_Workspace -> Cameras -> Bulletproof Camera
+    local seWorkspace = workspace:FindFirstChild("SE_Workspace")
+    if not seWorkspace then return end
+    
+    local cameras = seWorkspace:FindFirstChild("Cameras")
+    if not cameras then return end
+    
+    for _, camera in ipairs(cameras:GetChildren()) do
+        if camera.Name == "Bulletproof Camera" then
+            local mesh = camera:FindFirstChild("Bulletproof Camera")
+            if mesh and mesh:IsA("BasePart") and not espObjects[mesh] then
+                createGadgetESP(mesh, true)
+            end
+        end
+    end
+end
+
 -- Main scanning function
 local function scanForGadgets()
     if not gadgetESPSettings.Enabled then return end
     
-    -- Find gadgets folder
+    -- Scan regular gadgets folder
     local gadgetsFolder = workspace:FindFirstChild("Gadgets")
-    if not gadgetsFolder then return end
-
-    -- Scan all gadgets
-    for _, gadget in ipairs(gadgetsFolder:GetChildren()) do
-        if (gadget:IsA("Model") or gadget:IsA("BasePart")) and not espObjects[gadget] then
-            createGadgetESP(gadget)
+    if gadgetsFolder then
+        for _, gadget in ipairs(gadgetsFolder:GetChildren()) do
+            if (gadget:IsA("Model") or gadget:IsA("BasePart")) and not espObjects[gadget] then
+                createGadgetESP(gadget, false)
+            end
         end
     end
+
+    -- Scan for bulletproof cameras
+    scanForBulletproofCameras()
 
     cleanUpGadgetESP()
 end
@@ -1008,6 +1285,14 @@ local function updateGadgetESPVisibility()
                     if esp.textLabel then
                         esp.textLabel.TextColor3 = color
                     end
+                    if esp.distanceLabel then
+                        esp.distanceLabel.TextColor3 = color
+                    end
+                end
+                
+                -- Update distance if enabled
+                if gadgetESPSettings.ShowDistance and esp.updateDistance then
+                    esp.updateDistance()
                 end
             end
         else
@@ -1028,6 +1313,9 @@ local function updateRainbow(delta)
             if esp.textLabel then
                 esp.textLabel.TextColor3 = color
             end
+            if esp.distanceLabel then
+                esp.distanceLabel.TextColor3 = color
+            end
         end
     end
 end
@@ -1042,7 +1330,6 @@ local function setupGadgetESP()
         gadgetESPOriginalState = true
     end
     
-    local localPlayer = game.Players.LocalPlayer
     if localPlayer and localPlayer.Team then
         currentTeam = localPlayer.Team.Name
         if currentTeam ~= "Attackers" then
@@ -1074,7 +1361,6 @@ local function setupGadgetESP()
 end
 
 local function checkTeamChange()
-    local localPlayer = game.Players.LocalPlayer
     if not localPlayer then return end
     
     localPlayer:GetPropertyChangedSignal("Team"):Connect(function()
@@ -1134,6 +1420,9 @@ UItab:CreateColorPicker({
                 if esp.textLabel then
                     esp.textLabel.TextColor3 = Value
                 end
+                if esp.distanceLabel then
+                    esp.distanceLabel.TextColor3 = Value
+                end
             end
         end
     end
@@ -1184,6 +1473,9 @@ UItab:CreateToggle({
             if esp.textLabel then
                 esp.textLabel.TextColor3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or gadgetESPSettings.Color
             end
+            if esp.distanceLabel then
+                esp.distanceLabel.TextColor3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or gadgetESPSettings.Color
+            end
         end
     end,
 })
@@ -1216,6 +1508,58 @@ UItab:CreateToggle({
     end,
 })
 
+-- Distance label toggle
+UItab:CreateToggle({
+    Name = "Show Gadget Distance",
+    CurrentValue = gadgetESPSettings.ShowDistance,
+    Flag = "GadgetESPShowDistance",
+    Callback = function(Value)
+        gadgetESPSettings.ShowDistance = Value
+        for _, esp in pairs(espObjects) do
+            if esp.distanceLabel then
+                esp.distanceLabel.Visible = Value
+                -- Update connection based on toggle
+                if Value then
+                    if esp.distanceConnection then
+                        esp.distanceConnection:Disconnect()
+                    end
+                    esp.distanceConnection = game:GetService("RunService").Heartbeat:Connect(function()
+                        if esp.updateDistance then
+                            esp.updateDistance()
+                        end
+                    end)
+                else
+                    if esp.distanceConnection then
+                        esp.distanceConnection:Disconnect()
+                        esp.distanceConnection = nil
+                    end
+                end
+            end
+        end
+    end,
+})
+
+-- Bulletproof Camera toggle
+UItab:CreateToggle({
+    Name = "Show Bulletproof Cameras",
+    CurrentValue = gadgetESPSettings.ShowBulletproofCameras,
+    Flag = "GadgetESPShowBulletproofCameras",
+    Callback = function(Value)
+        gadgetESPSettings.ShowBulletproofCameras = Value
+        if gadgetESPSettings.Enabled then
+            -- Remove existing bulletproof cameras if disabled
+            if not Value then
+                for gadget, esp in pairs(espObjects) do
+                    if esp.isBulletproofCamera then
+                        removeGadgetESP(gadget)
+                    end
+                end
+            end
+            scanForGadgets()
+        end
+    end,
+})
+
 -- Name size slider
 UItab:CreateSlider({
     Name = "Gadget Name Size",
@@ -1230,9 +1574,497 @@ UItab:CreateSlider({
             if esp.textLabel then
                 esp.textLabel.TextSize = Value
             end
+            if esp.distanceLabel then
+                esp.distanceLabel.TextSize = Value - 2
+            end
         end
     end,
 })
+
+-- Initialize ESP if enabled by default
+if gadgetESPSettings.Enabled then
+    setupGadgetESP()
+end
+
+local CameraESPSection = UItab:CreateSection("Camera ESP Settings")
+
+-- Camera ESP settings
+local cameraESPSettings = {
+    Enabled = false,
+    Color = Color3.fromRGB(255, 165, 0),  -- Orange color for cameras
+    Transparency = 0.4,
+    MaxDistance = 1000,
+    RainbowMode = false,
+    RainbowSpeed = 1,
+    ShowNames = true,
+    NameSize = 18,
+    ShowDistance = true
+}
+
+local espObjects = {}
+local rainbowHue = 0
+local heartbeatConnection
+local currentTeam = ""
+local cameraESPOriginalState = false
+local localPlayer = game:GetService("Players").LocalPlayer
+
+-- Function to create highlight ESP for cameras
+local function createCameraESP(camera)
+    if espObjects[camera] then return end -- Already exists
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "CameraESP_Highlight"
+    highlight.Adornee = camera
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.FillTransparency = cameraESPSettings.Transparency
+    highlight.OutlineTransparency = 0
+    highlight.FillColor = cameraESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or cameraESPSettings.Color
+    highlight.OutlineColor = Color3.new(0, 0, 0)
+    highlight.Parent = camera
+
+    -- Create name label container
+    local nameLabel = Instance.new("BillboardGui")
+    nameLabel.Name = "CameraESP_Name"
+    local cameraPart = camera:IsA("BasePart") and camera or camera:FindFirstChildWhichIsA("BasePart", true)
+    nameLabel.Adornee = cameraPart
+    nameLabel.Size = UDim2.new(0, 200, 0, 50)
+    nameLabel.StudsOffset = Vector3.new(0, 2.5, 0)
+    nameLabel.AlwaysOnTop = true
+    nameLabel.MaxDistance = cameraESPSettings.MaxDistance
+    nameLabel.Enabled = cameraESPSettings.ShowNames
+
+    local frame = Instance.new("Frame")
+    frame.BackgroundTransparency = 1
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.Parent = nameLabel
+
+    -- Name label
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Name = "NameLabel"
+    textLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    textLabel.Position = UDim2.new(0, 0, 0, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = "Security Camera"  -- Custom name for DefaultCam
+    textLabel.TextColor3 = cameraESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or cameraESPSettings.Color
+    textLabel.TextSize = cameraESPSettings.NameSize
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextStrokeTransparency = 0
+    textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    textLabel.Parent = frame
+
+    -- Distance label
+    local distanceLabel = Instance.new("TextLabel")
+    distanceLabel.Name = "DistanceLabel"
+    distanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    distanceLabel.BackgroundTransparency = 1
+    distanceLabel.Text = "0 studs"
+    distanceLabel.TextColor3 = cameraESPSettings.RainbowMode and Color3.fromHSV(rainbowHue, 1, 1) or cameraESPSettings.Color
+    distanceLabel.TextSize = cameraESPSettings.NameSize - 2
+    distanceLabel.Font = Enum.Font.GothamBold
+    distanceLabel.TextStrokeTransparency = 0
+    distanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    distanceLabel.Visible = cameraESPSettings.ShowDistance
+    distanceLabel.Parent = frame
+
+    nameLabel.Parent = camera
+
+    -- Function to update distance
+    local function updateDistance()
+        if not camera or not camera.Parent then return end
+        if not localPlayer or not localPlayer.Character then return end
+        
+        local rootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not rootPart then return end
+        
+        local cameraPart = camera:IsA("BasePart") and camera or camera:FindFirstChildWhichIsA("BasePart", true)
+        if not cameraPart then return end
+        
+        local distance = math.floor((rootPart.Position - cameraPart.Position).Magnitude)
+        distanceLabel.Text = tostring(distance) .. " studs"
+    end
+
+    -- Create distance update connection
+    local distanceConnection
+    if cameraESPSettings.ShowDistance then
+        distanceConnection = game:GetService("RunService").Heartbeat:Connect(updateDistance)
+    end
+
+    espObjects[camera] = {
+        highlight = highlight,
+        nameLabel = nameLabel,
+        textLabel = textLabel,
+        distanceLabel = distanceLabel,
+        camera = camera,
+        connection = camera.AncestryChanged:Connect(function()
+            if not camera or not camera.Parent then
+                removeCameraESP(camera)
+            end
+        end),
+        distanceConnection = distanceConnection,
+        updateDistance = updateDistance
+    }
+end
+
+-- Function to remove ESP
+local function removeCameraESP(camera)
+    if espObjects[camera] then
+        if espObjects[camera].highlight then
+            espObjects[camera].highlight:Destroy()
+        end
+        if espObjects[camera].nameLabel then
+            espObjects[camera].nameLabel:Destroy()
+        end
+        if espObjects[camera].connection then
+            espObjects[camera].connection:Disconnect()
+        end
+        if espObjects[camera].distanceConnection then
+            espObjects[camera].distanceConnection:Disconnect()
+        end
+        espObjects[camera] = nil
+    end
+end
+
+-- Cleanup function
+local function cleanUpCameraESP()
+    for camera, _ in pairs(espObjects) do
+        if not camera or not camera.Parent then
+            removeCameraESP(camera)
+        end
+    end
+end
+
+-- Main scanning function
+local function scanForCameras()
+    if not cameraESPSettings.Enabled then return end
+    
+    -- Find cameras folder: Workspace > SE_Workspace > Cameras
+    local seWorkspace = workspace:FindFirstChild("SE_Workspace")
+    if not seWorkspace then return end
+    
+    local camerasFolder = seWorkspace:FindFirstChild("Cameras")
+    if not camerasFolder then return end
+
+    -- Scan all DefaultCam cameras
+    for _, camera in ipairs(camerasFolder:GetChildren()) do
+        if camera.Name == "DefaultCam" and (camera:IsA("Model") or camera:IsA("BasePart")) and not espObjects[camera] then
+            createCameraESP(camera)
+        end
+    end
+
+    cleanUpCameraESP()
+end
+
+-- Distance-based visibility update
+local function updateCameraESPVisibility()
+    if not cameraESPSettings.Enabled or not localPlayer or not localPlayer.Character then return end
+    local rootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+
+    for camera, esp in pairs(espObjects) do
+        if camera and camera.Parent then
+            local primaryPart = camera:IsA("BasePart") and camera or camera:FindFirstChildWhichIsA("BasePart", true)
+            if primaryPart then
+                local distance = (rootPart.Position - primaryPart.Position).Magnitude
+                local visible = distance <= cameraESPSettings.MaxDistance
+                
+                if esp.highlight then
+                    esp.highlight.Enabled = visible
+                end
+                
+                if esp.nameLabel then
+                    esp.nameLabel.Enabled = visible and cameraESPSettings.ShowNames
+                    esp.nameLabel.MaxDistance = cameraESPSettings.MaxDistance
+                end
+                
+                -- Update rainbow color if enabled
+                if cameraESPSettings.RainbowMode then
+                    local color = Color3.fromHSV(rainbowHue, 1, 1)
+                    if esp.highlight then
+                        esp.highlight.FillColor = color
+                    end
+                    if esp.textLabel then
+                        esp.textLabel.TextColor3 = color
+                    end
+                    if esp.distanceLabel then
+                        esp.distanceLabel.TextColor3 = color
+                    end
+                end
+                
+                -- Update distance if enabled
+                if cameraESPSettings.ShowDistance and esp.updateDistance then
+                    esp.updateDistance()
+                end
+            end
+        else
+            removeCameraESP(camera)
+        end
+    end
+end
+
+-- Rainbow color update
+local function updateRainbow(delta)
+    if cameraESPSettings.RainbowMode then
+        rainbowHue = (rainbowHue + delta * 0.25 * cameraESPSettings.RainbowSpeed) % 1
+        for _, esp in pairs(espObjects) do
+            local color = Color3.fromHSV(rainbowHue, 1, 1)
+            if esp.highlight then
+                esp.highlight.FillColor = color
+            end
+            if esp.textLabel then
+                esp.textLabel.TextColor3 = color
+            end
+            if esp.distanceLabel then
+                esp.distanceLabel.TextColor3 = color
+            end
+        end
+    end
+end
+
+-- Setup main loop
+local function setupCameraESP()
+    for camera, _ in pairs(espObjects) do
+        removeCameraESP(camera)
+    end
+    
+    if cameraESPSettings.Enabled and not cameraESPOriginalState then
+        cameraESPOriginalState = true
+    end
+    
+    if localPlayer and localPlayer.Team then
+        currentTeam = localPlayer.Team.Name
+        if currentTeam ~= "Attackers" then
+            if heartbeatConnection then
+                heartbeatConnection:Disconnect()
+                heartbeatConnection = nil
+            end
+            return
+        end
+    end
+    
+    if cameraESPOriginalState then
+        cameraESPSettings.Enabled = true
+        scanForCameras()
+        
+        if not heartbeatConnection then
+            heartbeatConnection = game:GetService("RunService").Heartbeat:Connect(function(delta)
+                updateRainbow(delta)
+                scanForCameras()
+                updateCameraESPVisibility()
+            end)
+        end
+    else
+        if heartbeatConnection then
+            heartbeatConnection:Disconnect()
+            heartbeatConnection = nil
+        end
+    end
+end
+
+local function checkTeamChange()
+    if not localPlayer then return end
+    
+    localPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+        if localPlayer.Team then
+            local newTeam = localPlayer.Team.Name
+            if newTeam ~= currentTeam then
+                currentTeam = newTeam
+                if cameraESPOriginalState then
+                    if newTeam == "Attackers" then
+                        setupCameraESP()
+                    else
+                        for camera, _ in pairs(espObjects) do
+                            removeCameraESP(camera)
+                        end
+                        if heartbeatConnection then
+                            heartbeatConnection:Disconnect()
+                            heartbeatConnection = nil
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- Initialize
+checkTeamChange()
+
+-- Main toggle
+UItab:CreateToggle({
+    Name = "Camera ESP",
+    CurrentValue = cameraESPSettings.Enabled,
+    Flag = "CameraESPEnabled",
+    Callback = function(Value)
+        cameraESPSettings.Enabled = Value
+        if Value then
+            cameraESPOriginalState = true
+        else
+            cameraESPOriginalState = false
+        end
+        setupCameraESP()
+    end,
+})
+
+-- Color picker
+UItab:CreateColorPicker({
+    Name = "Camera ESP Color",
+    Color = cameraESPSettings.Color,
+    Flag = "CameraESPColor",
+    Callback = function(Value)
+        cameraESPSettings.Color = Value
+        if not cameraESPSettings.RainbowMode then
+            for _, esp in pairs(espObjects) do
+                if esp.highlight then
+                    esp.highlight.FillColor = Value
+                end
+                if esp.textLabel then
+                    esp.textLabel.TextColor3 = Value
+                end
+                if esp.distanceLabel then
+                    esp.distanceLabel.TextColor3 = Value
+                end
+            end
+        end
+    end
+})
+
+-- Transparency slider
+UItab:CreateSlider({
+    Name = "Camera ESP Transparency",
+    Range = {0, 1},
+    Increment = 0.05,
+    Suffix = "",
+    CurrentValue = cameraESPSettings.Transparency,
+    Flag = "CameraESPTransparency",
+    Callback = function(Value)
+        cameraESPSettings.Transparency = Value
+        for _, esp in pairs(espObjects) do
+            if esp.highlight then
+                esp.highlight.FillTransparency = Value
+            end
+        end
+    end,
+})
+
+-- Max distance slider
+UItab:CreateSlider({
+    Name = "Camera ESP Distance",
+    Range = {100, 2000},
+    Increment = 50,
+    Suffix = " studs",
+    CurrentValue = cameraESPSettings.MaxDistance,
+    Flag = "CameraESPDistance",
+    Callback = function(Value)
+        cameraESPSettings.MaxDistance = Value
+    end,
+})
+
+-- Rainbow mode toggle
+UItab:CreateToggle({
+    Name = "Camera Rainbow ESP",
+    CurrentValue = cameraESPSettings.RainbowMode,
+    Flag = "CameraRainbowMode",
+    Callback = function(Value)
+        cameraESPSettings.RainbowMode = Value
+        for _, esp in pairs(espObjects) do
+            if esp.highlight then
+                esp.highlight.FillColor = Value and Color3.fromHSV(rainbowHue, 1, 1) or cameraESPSettings.Color
+            end
+            if esp.textLabel then
+                esp.textLabel.TextColor3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or cameraESPSettings.Color
+            end
+            if esp.distanceLabel then
+                esp.distanceLabel.TextColor3 = Value and Color3.fromHSV(rainbowHue, 1, 1) or cameraESPSettings.Color
+            end
+        end
+    end,
+})
+
+-- Rainbow speed slider
+UItab:CreateSlider({
+    Name = "Camera Rainbow Speed",
+    Range = {0.5, 3},
+    Increment = 0.1,
+    Suffix = "x",
+    CurrentValue = cameraESPSettings.RainbowSpeed,
+    Flag = "CameraRainbowSpeed",
+    Callback = function(Value)
+        cameraESPSettings.RainbowSpeed = Value
+    end,
+})
+
+-- Name label toggle
+UItab:CreateToggle({
+    Name = "Show Camera Names",
+    CurrentValue = cameraESPSettings.ShowNames,
+    Flag = "CameraESPShowNames",
+    Callback = function(Value)
+        cameraESPSettings.ShowNames = Value
+        for _, esp in pairs(espObjects) do
+            if esp.nameLabel then
+                esp.nameLabel.Enabled = Value
+            end
+        end
+    end,
+})
+
+-- Distance label toggle
+UItab:CreateToggle({
+    Name = "Show Camera Distance",
+    CurrentValue = cameraESPSettings.ShowDistance,
+    Flag = "CameraESPShowDistance",
+    Callback = function(Value)
+        cameraESPSettings.ShowDistance = Value
+        for _, esp in pairs(espObjects) do
+            if esp.distanceLabel then
+                esp.distanceLabel.Visible = Value
+                -- Update connection based on toggle
+                if Value then
+                    if esp.distanceConnection then
+                        esp.distanceConnection:Disconnect()
+                    end
+                    esp.distanceConnection = game:GetService("RunService").Heartbeat:Connect(function()
+                        if esp.updateDistance then
+                            esp.updateDistance()
+                        end
+                    end)
+                else
+                    if esp.distanceConnection then
+                        esp.distanceConnection:Disconnect()
+                        esp.distanceConnection = nil
+                    end
+                end
+            end
+        end
+    end,
+})
+
+-- Name size slider
+UItab:CreateSlider({
+    Name = "Camera Name Size",
+    Range = {10, 30},
+    Increment = 1,
+    Suffix = "px",
+    CurrentValue = cameraESPSettings.NameSize,
+    Flag = "CameraESPNameSize",
+    Callback = function(Value)
+        cameraESPSettings.NameSize = Value
+        for _, esp in pairs(espObjects) do
+            if esp.textLabel then
+                esp.textLabel.TextSize = Value
+            end
+            if esp.distanceLabel then
+                esp.distanceLabel.TextSize = Value - 2
+            end
+        end
+    end,
+})
+
+-- Initialize ESP if enabled by default
+if cameraESPSettings.Enabled then
+    setupCameraESP()
+end
 
 local Teleportsection = MainTab:CreateSection("Teleport")
 local Input = MainTab:CreateInput({
