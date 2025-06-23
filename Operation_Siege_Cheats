@@ -2066,6 +2066,194 @@ if cameraESPSettings.Enabled then
     setupCameraESP()
 end
 
+local flysigmasection = MainTab:CreateSection("Fly Cheats")
+-- Store flight-related variables outside the toggle for access
+local flying = false
+local flyConnection1, flyConnection2
+local flyBV
+local currentFlySpeed = 50 -- Default speed
+
+-- Create the speed slider first so it's available when the toggle is created
+local SpeedSlider = MainTab:CreateSlider({
+    Name = "Fly Speed",
+    Range = {1, 200},
+    Increment = 1,
+    Suffix = " studs",
+    CurrentValue = currentFlySpeed,
+    Flag = "FlySpeedSlider",
+    Callback = function(Value)
+        currentFlySpeed = Value
+    end,
+})
+
+local FlyToggle = MainTab:CreateToggle({
+    Name = "Fly (Press F to activate)",
+    CurrentValue = false,
+    Flag = "FlyToggle",
+    Callback = function(Value)
+        if not Value then
+            -- Clean up when toggle is turned off
+            if flyConnection1 then
+                flyConnection1:Disconnect()
+                flyConnection1 = nil
+            end
+            if flyConnection2 then
+                flyConnection2:Disconnect()
+                flyConnection2 = nil
+            end
+            
+            -- Reset flight state
+            local player = game.Players.LocalPlayer
+            local character = player.Character
+            if character then
+                local humanoid = character:FindFirstChild("Humanoid")
+                if humanoid then
+                    humanoid.PlatformStand = false
+                    if humanoid.RootPart and humanoid.RootPart:FindFirstChild("FlyBV") then
+                        humanoid.RootPart.FlyBV:Destroy()
+                    end
+                end
+            end
+            flying = false
+            return
+        end
+        
+        -- Initialize flight system when toggle is on
+        local player = game.Players.LocalPlayer
+        local character = player.Character or player.CharacterAdded:Wait()
+        local humanoid = character:WaitForChild("Humanoid")
+
+        -- Toggle flying when F key is pressed
+        flyConnection1 = game:GetService("UserInputService").InputBegan:Connect(function(input, gameProcessed)
+            if not gameProcessed and input.KeyCode == Enum.KeyCode.F then
+                flying = not flying
+                
+                if flying then
+                    humanoid.PlatformStand = true -- Allows for free movement
+                    -- Create a BodyVelocity for flight control
+                    flyBV = Instance.new("BodyVelocity")
+                    flyBV.Name = "FlyBV"
+                    flyBV.Velocity = Vector3.new(0, 0, 0)
+                    flyBV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                    flyBV.P = 10000
+                    flyBV.Parent = humanoid.RootPart
+                else
+                    humanoid.PlatformStand = false
+                    -- Remove the BodyVelocity when not flying
+                    if flyBV then
+                        flyBV:Destroy()
+                        flyBV = nil
+                    end
+                end
+            end
+        end)
+
+        -- Flight control while flying
+        flyConnection2 = game:GetService("RunService").Heartbeat:Connect(function()
+            if flying and humanoid and humanoid.RootPart then
+                local root = humanoid.RootPart
+                local cam = workspace.CurrentCamera
+                
+                -- Get movement direction based on camera orientation
+                local forward = cam.CFrame.LookVector
+                local right = cam.CFrame.RightVector
+                local up = Vector3.new(0, 1, 0)
+                
+                local direction = Vector3.new(0, 0, 0)
+                
+                -- Check for movement inputs
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.W) then
+                    direction = direction + forward
+                end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.S) then
+                    direction = direction - forward
+                end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.D) then
+                    direction = direction + right
+                end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.A) then
+                    direction = direction - right
+                end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.Space) then
+                    direction = direction + up
+                end
+                if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.LeftShift) then
+                    direction = direction - up
+                end
+                
+                -- Normalize and apply speed
+                if direction.Magnitude > 0 then
+                    direction = direction.Unit * currentFlySpeed
+                end
+                
+                -- Apply velocity
+                if flyBV then
+                    flyBV.Velocity = direction
+                end
+            end
+        end)
+    end,
+})
+
+-- Configuration variables
+local noclipEnabled = false
+local noclipConnections = {}
+
+-- No clip sections
+local SIGMAClip = MainTab:CreateSection("NoClip")
+
+-- NoClip function
+local function noclipLoop()
+    if noclipEnabled and game.Players.LocalPlayer.Character then
+        for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+            if v:IsA("BasePart") then
+                v.CanCollide = false
+            end
+        end
+    end
+end
+
+local NoclipToggle = MainTab:CreateToggle({
+    Name = "NoClip (Press N to toggle)",
+    CurrentValue = false,
+    Flag = "NoclipToggle",
+    Callback = function(Value)
+        noclipEnabled = Value
+        
+        if Value then
+            -- Enable NoClip
+            table.insert(noclipConnections, game:GetService("RunService").Stepped:Connect(noclipLoop))
+            
+            -- Toggle with N key
+            table.insert(noclipConnections, game:GetService("UserInputService").InputBegan:Connect(function(input, gameProcessed)
+                if not gameProcessed and input.KeyCode == Enum.KeyCode.N then
+                    noclipEnabled = not noclipEnabled
+                    Rayfield:Notify({
+                        Title = "NoClip",
+                        Content = noclipEnabled and "Enabled" or "Disabled",
+                        Duration = 1,
+                    })
+                end
+            end))
+        else
+            -- Disable NoClip and clean up connections
+            for _, connection in pairs(noclipConnections) do
+                connection:Disconnect()
+            end
+            noclipConnections = {}
+            
+            -- Restore collision
+            if game.Players.LocalPlayer.Character then
+                for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+                    if v:IsA("BasePart") then
+                        v.CanCollide = true
+                    end
+                end
+            end
+        end
+    end,
+})
+
 local Teleportsection = MainTab:CreateSection("Teleport")
 local Input = MainTab:CreateInput({
     Name = "Player Username",
