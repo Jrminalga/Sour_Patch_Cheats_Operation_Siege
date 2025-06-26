@@ -2255,6 +2255,299 @@ local NoclipToggle = MainTab:CreateToggle({
 })
 
 local Teleportsection = MainTab:CreateSection("Teleport")
+
+-- Teleportation variables
+local teleporting = false
+local autoTeleport = false
+local teleportInterval = 2
+local teleportKeybind = "T"
+local teleportConnection = nil
+
+-- Cache services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Function to get the opposite team
+local function getOppositeTeam()
+    if not game:FindFirstChild("Teams") then return nil end
+    
+    local localTeam = LocalPlayer.Team
+    if not localTeam then return nil end
+    
+    -- Find all teams and identify the opposite one
+    local teams = {}
+    for _, team in ipairs(game.Teams:GetTeams()) do
+        if team ~= localTeam then
+            table.insert(teams, team)
+        end
+    end
+    
+    -- Return the first opposite team found (assuming there are only 2 teams)
+    return teams[1]
+end
+
+-- Function to check if player is on the opposite team
+local function isOppositeTeam(player)
+    if player == LocalPlayer then return false end
+    
+    local oppositeTeam = getOppositeTeam()
+    if not oppositeTeam then return true end -- If no teams, treat everyone as opposite
+    
+    return player.Team == oppositeTeam
+end
+
+-- Function to get all opposite team players
+local function getOppositeTeamPlayers()
+    local enemies = {}
+    local oppositeTeam = getOppositeTeam()
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if isOppositeTeam(player) and player.Character then
+            local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+            
+            if humanoidRootPart and humanoid and humanoid.Health > 0 then
+                table.insert(enemies, player.Character)
+            end
+        end
+    end
+    
+    return enemies
+end
+
+-- Improved teleport function with team check
+local function teleportToRandomEnemy()
+    -- Validate local character
+    if not LocalPlayer.Character then 
+        Rayfield:Notify({
+            Title = "Teleport Failed",
+            Content = "Your character doesn't exist",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return false 
+    end
+    
+    local humanoidRootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then 
+        Rayfield:Notify({
+            Title = "Teleport Failed",
+            Content = "HumanoidRootPart not found",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return false 
+    end
+    
+    -- Get opposite team players
+    local enemies = getOppositeTeamPlayers()
+    if #enemies == 0 then
+        Rayfield:Notify({
+            Title = "Teleport Failed",
+            Content = "No valid enemies found",
+            Duration = 3,
+            Image = 4483362458
+        })
+        return false
+    end
+    
+    -- Select random enemy
+    local randomEnemy = enemies[math.random(1, #enemies)]
+    local enemyRoot = randomEnemy:FindFirstChild("HumanoidRootPart")
+    if not enemyRoot then return false end
+    
+    -- Teleport with offset and face same direction
+    local offset = Vector3.new(0, 3, 0)
+    humanoidRootPart.CFrame = CFrame.new(enemyRoot.Position + offset, enemyRoot.Position)
+    
+    Rayfield:Notify({
+        Title = "Teleport Success",
+        Content = "Teleported to enemy",
+        Duration = 1,
+        Image = 4483362458
+    })
+    return true
+end
+
+-- Teleportation variables
+local teleporting = false
+local autoTeleport = false
+local teleportDelay = 3 -- Default delay between auto-teleports
+local teleportKeybind = "T"
+local teleportConnection = nil
+local lastTeleportTime = 0
+local isTeleportingNow = false -- Prevents overlapping teleports
+
+-- Cache services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Improved teleport function with proper timing
+local function teleportToRandomEnemy()
+    if isTeleportingNow then return false end
+    isTeleportingNow = true
+    
+    -- Anti-spam protection
+    local currentTime = os.clock()
+    if currentTime - lastTeleportTime < 0.5 then 
+        isTeleportingNow = false
+        return false 
+    end
+    lastTeleportTime = currentTime
+    
+    -- Validate local character
+    if not LocalPlayer.Character then 
+        Rayfield:Notify({
+            Title = "Teleport Failed",
+            Content = "Your character doesn't exist",
+            Duration = 3,
+            Image = 4483362458
+        })
+        isTeleportingNow = false
+        return false 
+    end
+    
+    local humanoidRootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then 
+        Rayfield:Notify({
+            Title = "Teleport Failed",
+            Content = "HumanoidRootPart not found",
+            Duration = 3,
+            Image = 4483362458
+        })
+        isTeleportingNow = false
+        return false 
+    end
+    
+    -- Get opposite team players
+    local enemies = getOppositeTeamPlayers()
+    if #enemies == 0 then
+        Rayfield:Notify({
+            Title = "Teleport Failed",
+            Content = "No valid enemies found",
+            Duration = 3,
+            Image = 4483362458
+        })
+        isTeleportingNow = false
+        return false
+    end
+    
+    -- Select random enemy
+    local randomEnemy = enemies[math.random(1, #enemies)]
+    local enemyRoot = randomEnemy:FindFirstChild("HumanoidRootPart")
+    if not enemyRoot then 
+        isTeleportingNow = false
+        return false 
+    end
+    
+    -- Teleport with offset and face same direction
+    local offset = Vector3.new(0, 3, 0)
+    humanoidRootPart.CFrame = CFrame.new(enemyRoot.Position + offset, enemyRoot.Position)
+    
+    Rayfield:Notify({
+        Title = "Teleport Success",
+        Content = string.format("Teleported to enemy\nNext in: %.1fs", teleportDelay),
+        Duration = math.min(teleportDelay, 3), -- Show notification for delay time or max 3 seconds
+        Image = 4483362458
+    })
+    
+    isTeleportingNow = false
+    return true
+end
+
+local TeleportToggle = MainTab:CreateToggle({
+    Name = "Enable Teleport System",
+    CurrentValue = false,
+    Flag = "TeleportToggle",
+    Callback = function(Value)
+        teleporting = Value
+        if not Value and autoTeleport then
+            AutoTeleportToggle:Set(false)
+        end
+    end,
+})
+
+local TeleportKeybind = MainTab:CreateKeybind({
+    Name = "Teleport to Enemy (Current: "..teleportKeybind..")",
+    CurrentKeybind = teleportKeybind,
+    HoldToInteract = false,
+    Flag = "TeleportKeybind",
+    Callback = function(Keybind)
+        if teleporting then
+            teleportToRandomEnemy()
+        else
+            Rayfield:Notify({
+                Title = "System Disabled",
+                Content = "Enable the teleport system first",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end,
+})
+
+TeleportKeybind.OnKeybindChanged = function(newKeybind)
+    teleportKeybind = newKeybind
+    TeleportKeybind:Set({
+        Name = "Teleport to Enemy (Current: "..teleportKeybind..")"
+    })
+end
+
+local AutoTeleportToggle = MainTab:CreateToggle({
+    Name = "Auto Teleport to Enemies",
+    CurrentValue = false,
+    Flag = "AutoTeleportToggle",
+    Callback = function(Value)
+        autoTeleport = Value
+        
+        if teleportConnection then
+            teleportConnection:Disconnect()
+            teleportConnection = nil
+        end
+        
+        if autoTeleport and teleporting then
+            local lastTeleport = 0
+            teleportConnection = RunService.Heartbeat:Connect(function()
+                local now = os.clock()
+                if now - lastTeleport >= teleportDelay then
+                    teleportToRandomEnemy()
+                    lastTeleport = now
+                end
+            end)
+        end
+    end,
+})
+
+local TeleportDelaySlider = MainTab:CreateSlider({
+    Name = "Auto-Teleport Delay (seconds)",
+    Range = {1, 10}, -- 1 to 10 seconds range
+    Increment = 0.5,
+    Suffix = "s",
+    CurrentValue = teleportDelay,
+    Flag = "TeleportDelay",
+    Callback = function(Value)
+        teleportDelay = Value
+    end,
+})
+
+MainTab:CreateButton({
+    Name = "Teleport Now",
+    Callback = function()
+        if teleporting then
+            teleportToRandomEnemy()
+        else
+            Rayfield:Notify({
+                Title = "System Disabled",
+                Content = "Enable the teleport system first",
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end,
+})
+
 local Input = MainTab:CreateInput({
     Name = "Player Username",
     PlaceholderText = "Enter username",
